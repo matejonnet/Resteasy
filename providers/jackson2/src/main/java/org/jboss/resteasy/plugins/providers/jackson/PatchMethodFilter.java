@@ -1,18 +1,11 @@
 package org.jboss.resteasy.plugins.providers.jackson;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-
-import javax.annotation.Priority;
-import javax.ws.rs.NotFoundException;
-import javax.ws.rs.ProcessingException;
-import javax.ws.rs.container.ContainerRequestContext;
-import javax.ws.rs.container.ContainerRequestFilter;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.ext.MessageBodyWriter;
-import javax.ws.rs.ext.Provider;
-
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.fge.jsonpatch.JsonPatch;
+import com.github.fge.jsonpatch.JsonPatchException;
 import org.jboss.resteasy.core.ResourceInvoker;
 import org.jboss.resteasy.core.ResourceMethodInvoker;
 import org.jboss.resteasy.specimpl.MultivaluedTreeMap;
@@ -25,12 +18,20 @@ import org.jboss.resteasy.spi.Registry;
 import org.jboss.resteasy.spi.ResteasyProviderFactory;
 import org.jboss.resteasy.util.HttpResponseCodes;
 
-import com.fasterxml.jackson.core.JsonParseException;
-import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fge.jsonpatch.JsonPatch;
-import com.github.fge.jsonpatch.JsonPatchException;
+import javax.annotation.Priority;
+import javax.ws.rs.NotFoundException;
+import javax.ws.rs.ProcessingException;
+import javax.ws.rs.container.ContainerRequestContext;
+import javax.ws.rs.container.ContainerRequestFilter;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.ext.ContextResolver;
+import javax.ws.rs.ext.MessageBodyWriter;
+import javax.ws.rs.ext.Provider;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+
+
 /*
  * @author <a href="mailto:ema@redhat.com">Jim Ma</a>
  */
@@ -38,6 +39,9 @@ import com.github.fge.jsonpatch.JsonPatchException;
 @Priority(Integer.MAX_VALUE)
 public class PatchMethodFilter implements ContainerRequestFilter
 {
+
+   private volatile ObjectMapper objectMapper;
+
    @Override
    @SuppressWarnings({"rawtypes", "unchecked"})
    public void filter(ContainerRequestContext requestContext) throws IOException
@@ -67,7 +71,7 @@ public class PatchMethodFilter implements ContainerRequestFilter
                   MediaType.APPLICATION_JSON_TYPE);
             msgBodyWriter.writeTo(object, object.getClass(), object.getClass(), methodInvoker.getMethodAnnotations(),
                   MediaType.APPLICATION_JSON_TYPE, new MultivaluedTreeMap<String, Object>(), tmpOutputStream);
-            ObjectMapper mapper = new ObjectMapper();
+            ObjectMapper mapper = getObjectMapper();
             JsonNode targetJson = mapper.readValue(tmpOutputStream.toByteArray(), JsonNode.class);
             JsonPatch patch = JsonPatch.fromJson(mapper.readValue(request.getInputStream(), JsonNode.class));
             JsonNode result = patch.apply(targetJson);
@@ -96,6 +100,27 @@ public class PatchMethodFilter implements ContainerRequestFilter
          }
       }
 
+   }
+
+   private ObjectMapper getObjectMapper() {
+      if (objectMapper == null) {
+         synchronized(this) {
+            if (objectMapper == null) {
+               ObjectMapper contextMapper = getContextObjectMapper();
+               objectMapper = (contextMapper == null) ? new ObjectMapper() : contextMapper;
+            }
+         }
+      }
+      return objectMapper;
+   }
+
+   private ObjectMapper getContextObjectMapper()
+   {
+      ResteasyProviderFactory factory = ResteasyProviderFactory.getInstance();
+      ContextResolver<ObjectMapper> resolver = factory
+              .getContextResolver(ObjectMapper.class, MediaType.APPLICATION_JSON_TYPE);
+      if (resolver == null) return null;
+      return resolver.getContext(ObjectMapper.class);
    }
 
 }
